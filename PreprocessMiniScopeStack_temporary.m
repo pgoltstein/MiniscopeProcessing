@@ -1,10 +1,15 @@
-function [ImData, RawImData] = PreprocessMiniScopeStack_temporary
+function ImData = PreprocessMiniScopeStack_temporary
 % Pre-processes raw miniscope data
     fprintf('\nPre-processing data in: %s\n', pwd);
     
     %% Pre-processing settings
     ProcessingSettings.DoRegistration = true; % True / False
-    ProcessingSettings.ImRegTemplateLength = 10; % seconds
+    ProcessingSettings.ImRegTemplateLength = 10; % 10 seconds
+    ProcessingSettings.ImReg_BG_FoF = 31; % 31 px; Background subtraction for image registration
+    ProcessingSettings.ImReg_FG_FoF = 5; % 5 px; Foreground blur for image registration
+    
+    ProcessingSettings.DoBackgroundSubtraction = true; % True / False
+    ProcessingSettings.BackgroundSubtractionFoF = 17; % 17 px; Real background subtraction
     
     %% Load Experimental data
 
@@ -59,8 +64,6 @@ function [ImData, RawImData] = PreprocessMiniScopeStack_temporary
     end
     fprintf(' ... done\n');
     warning('on'); % Aaaand warnings back on..
-    RawImData = ImData;
-    
     I = AutoScaleImage( mean(ImData,3), 'uint16' );
     imwrite(I,'RawAverage.tiff','tiff');
 
@@ -71,17 +74,17 @@ function [ImData, RawImData] = PreprocessMiniScopeStack_temporary
         % Calulate template to register to
         fprintf('Making template\n');
         TemplateData = ImData( :, :, 1:round(ProcessingSettings.ImRegTemplateLength*ProcessingSettings.SamplingFreq) );
-        RegOutput = ImageRegistration( TemplateData, mean(TemplateData,3) );
+        RegOutput = ImageRegistration( TemplateData, mean(TemplateData,3), ProcessingSettings.ImReg_BG_FoF, ProcessingSettings.ImReg_FG_FoF );
         Template = mean( ShiftImagingData( TemplateData, -1*RegOutput.y, -1*RegOutput.x ), 3 );
 
         % Get registration parameters
         fprintf('Calculating registration parameters\n');
-        RegOutput = ImageRegistration( ImData, Template );
+        RegOutput = ImageRegistration( ImData, Template, ProcessingSettings.ImReg_BG_FoF, ProcessingSettings.ImReg_FG_FoF );
 
         % Register data from channel 2
         fprintf('Shifting frames ... ');
         ImData = ShiftImagingData( ImData, -1*RegOutput.y, -1*RegOutput.x );
-        save('ImageRegistrationParameters.mat','RegOutput');    
+        save('ImageRegistrationParameters.mat','RegOutput','Template');    
         fprintf('done\n');
 
         I = AutoScaleImage( mean(ImData,3), 'uint16' );
@@ -90,13 +93,26 @@ function [ImData, RawImData] = PreprocessMiniScopeStack_temporary
         fprintf('\nSkipping image registration\n');
     end
     
+    %% Perform background subtraction
+    if ProcessingSettings.DoBackgroundSubtraction
+        fprintf('Background subtraction (FoF=%dpx); frame %6d',ProcessingSettings.BackgroundSubtractionFoF,0);
+        BGfilter = fspecial('average',ProcessingSettings.BackgroundSubtractionFoF);
+        for f = 1:nFrames
+            fprintf('\b\b\b\b\b\b%6d',f);
+            BG = imfilter( ImData(:,:,f), BGfilter, 'replicate' );
+            ImData(:,:,f) = ImData(:,:,f)-BG;
+        end
+        fprintf(' ... done\n');
+
+        I = AutoScaleImage( mean(ImData,3), 'uint16' );
+        imwrite(I,'BackgroundSubtractedAverage.tiff','tiff');
+    end    
+    
     %% Calculate response maps
     if ~isempty(StimData)
         fprintf('\nCalculating response maps\n');
         nStimuli = length(StimData.StimSettings.Stimulus);
-        MakeResponseMap( ImData, 1:nStimuli, 'AllStimuli', 0, ...
-            ProcessingSettings.SamplingFreq, [1 2 4 8], X, StimData );
-        
+
         % Retinotopy
         if isfield(StimData.StimSettings,'NumXpatches')
             xPatch = []; yPatch = [];
@@ -108,7 +124,20 @@ function [ImData, RawImData] = PreprocessMiniScopeStack_temporary
                 ProcessingSettings.SamplingFreq, [1 2 4 8], X, StimData );
             MakeResponseMap( ImData, yPatch, 'Elevation', 0, ...
                 ProcessingSettings.SamplingFreq, [1 2 4 8], X, StimData );
+        
+        % Gratings
+        elseif isfield(StimData.StimSettings,'Angles')
+            MakeResponseMap( ImData, 1:nStimuli, 'Directions', 0, ...
+                ProcessingSettings.SamplingFreq, [1 2], X, StimData );
+            MakeResponseMap( ImData, 1:nStimuli, 'Orientations', 2, ...
+                ProcessingSettings.SamplingFreq, [1 2], X, StimData );
+        
+        % Just all stimuli
+        else
+            MakeResponseMap( ImData, 1:nStimuli, 'AllStimuli', 0, ...
+                ProcessingSettings.SamplingFreq, [1 2], X, StimData );
         end
+        
     end
     
     fprintf('\nFinished.\n');
