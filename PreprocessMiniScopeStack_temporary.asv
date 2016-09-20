@@ -3,6 +3,7 @@ function [ImData, RawImData] = PreprocessMiniScopeStack_temporary
     fprintf('\nPre-processing data in: %s\n', pwd);
     
     %% Pre-processing settings
+    ProcessingSettings.AuxSampFreq = 1000; % Hz
     ProcessingSettings.DoRegistration = true; % True / False
     ProcessingSettings.ImRegTemplateLength = 10; % seconds
     
@@ -11,10 +12,9 @@ function [ImData, RawImData] = PreprocessMiniScopeStack_temporary
     % Load aux recorder data
     AuxFile = dir(['.' filesep '*.lvd']);
     fprintf('\nLoading Aux-data: %s ... ', AuxFile(1).name);
-    [AuxData, ProcessingSettings.AuxSampFreq] = LoadLvdFile( AuxFile(1).name );
+    AuxData = load_lvd( AuxFile(1).name );
     fprintf('done\n');
-    fprintf('Aux sampling frequency = %5.1f ms\n', ProcessingSettings.AuxSampFreq);
-        
+    
     % Find frame times
     FrameCh = AuxData(10,:);
     FrameOnsets = find( diff(FrameCh>2)>0.1 );
@@ -72,7 +72,7 @@ function [ImData, RawImData] = PreprocessMiniScopeStack_temporary
         fprintf('Making template\n');
         TemplateData = ImData( :, :, 1:round(ProcessingSettings.ImRegTemplateLength*ProcessingSettings.SamplingFreq) );
         RegOutput = ImageRegistration( TemplateData, mean(TemplateData,3) );
-        Template = mean( ShiftImagingData( TemplateData, -1*RegOutput.y, -1*RegOutput.x ), 3 );
+        Template = mean( LOCAL_shift_data( TemplateData, -1*RegOutput.y, -1*RegOutput.x ), 3 );
 
         % Get registration parameters
         fprintf('Calculating registration parameters\n');
